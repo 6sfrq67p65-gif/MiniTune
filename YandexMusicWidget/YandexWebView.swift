@@ -17,46 +17,90 @@ class WebViewModel: ObservableObject {
     
     func playPause() {
         let js = """
-        if (typeof externalAPI !== 'undefined') { externalAPI.togglePause(); }
-        else {
-            var pauseBtn = document.querySelector('[aria-label*="Пауза"], [title*="Пауза"]');
-            if (pauseBtn) {
-                pauseBtn.click();
-            } else {
-                var playBtn = document.querySelector('[aria-label*="Играть"], [aria-label*="Воспроизвести"], [title*="Играть"], [title*="Воспроизвести"], [class*="playButton" i]');
-                if (playBtn) {
-                    playBtn.click();
-                } else {
-                    var media = document.querySelector('video, audio');
-                    if (media) {
-                        if (media.paused) media.play();
-                        else media.pause();
+        (function() {
+            try {
+                var player = document.querySelector('section[aria-label="Плеер" i], [class*="PlayerBar" i], [class*="player-controls" i]');
+                if (!player) return;
+
+                function doClick(target) {
+                    if (typeof target.click === 'function') {
+                        target.click();
+                    } else {
+                        target.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true, view: window}));
                     }
                 }
-            }
-        }
+
+                // 1. Ищем кнопку по внутренней SVG иконке (самый железобетонный метод)
+                var svgs = player.querySelectorAll('use');
+                for (var i = 0; i < svgs.length; i++) {
+                    var href = svgs[i].getAttribute('xlink:href') || svgs[i].getAttribute('href') || '';
+                    var isTarget = false;
+                    
+                    if (href.indexOf('#pause') !== -1) isTarget = true;
+                    // Ищем #play, но исключаем #playlist, #player и т.д.
+                    if (href.indexOf('#play') !== -1 && href.indexOf('playlist') === -1 && href.indexOf('player') === -1) isTarget = true;
+                    
+                    if (isTarget) {
+                        var btn = svgs[i].closest('button, [role="button"]') || svgs[i].parentElement;
+                        doClick(btn);
+                        return;
+                    }
+                }
+
+                // 2. Ищем по aria-label или title, если SVG поменяли
+                var labels = ['Пауза', 'Pause', 'Играть', 'Воспроизвести', 'Play', 'Слушать'];
+                for (var i = 0; i < labels.length; i++) {
+                    var btn = player.querySelector('[aria-label*="' + labels[i] + '" i], [title*="' + labels[i] + '" i]');
+                    if (btn) {
+                        var target = btn.closest('button, [role="button"]') || btn;
+                        doClick(target);
+                        return;
+                    }
+                }
+
+                // 3. Запасной вариант - кнопка поверх обложки
+                var coverBtn = player.querySelector('[class*="playButton" i], [class*="PlayButton" i]');
+                if (coverBtn) {
+                    doClick(coverBtn);
+                    return;
+                }
+                
+                // Если плеера нет - пытаемся включить "Мою Волну"
+                var vibeBtn = document.querySelector('[aria-label*="Моя волна" i], [class*="Vibe" i]');
+                if (vibeBtn) doClick(vibeBtn);
+                
+            } catch(e) {}
+        })();
         """
         webView?.evaluateJavaScript(js, completionHandler: nil)
     }
     
     func nextTrack() {
         let js = """
-        if (typeof externalAPI !== 'undefined') { externalAPI.next(); }
-        else {
-            var btn = document.querySelector('[aria-label*="Следующ"], [aria-label*="Вперед"], [class*="next" i], [class*="skipForward" i]');
-            if (btn) btn.click();
-        }
+        (function() {
+            if (typeof externalAPI !== 'undefined') { externalAPI.next(); return; }
+            var player = document.querySelector('section[aria-label="Плеер" i], [class*="PlayerBar" i]') || document;
+            var btn = player.querySelector('[aria-label*="Следующ" i], [aria-label*="Вперед" i], use[href*="#next" i]');
+            if (btn) {
+                var target = btn.closest('button') || btn;
+                target.click();
+            }
+        })();
         """
         webView?.evaluateJavaScript(js, completionHandler: nil)
     }
     
     func prevTrack() {
         let js = """
-        if (typeof externalAPI !== 'undefined') { externalAPI.prev(); }
-        else {
-            var btn = document.querySelector('[aria-label*="Предыдущ"], [aria-label*="Назад"], [class*="prev" i], [class*="skipBack" i]');
-            if (btn) btn.click();
-        }
+        (function() {
+            if (typeof externalAPI !== 'undefined') { externalAPI.prev(); return; }
+            var player = document.querySelector('section[aria-label="Плеер" i], [class*="PlayerBar" i]') || document;
+            var btn = player.querySelector('[aria-label*="Предыдущ" i], [aria-label*="Назад" i], use[href*="#previous" i], use[href*="#prev" i]');
+            if (btn) {
+                var target = btn.closest('button') || btn;
+                target.click();
+            }
+        })();
         """
         webView?.evaluateJavaScript(js, completionHandler: nil)
     }
@@ -69,18 +113,24 @@ class WebViewModel: ObservableObject {
             if (dur > 0) externalAPI.setPosition(\(progress) * dur);
         } else {
             var media = document.querySelector('video, audio');
-            if (media && media.duration && media.duration !== Infinity) {
+            var success = false;
+            if (media && media.duration && media.duration !== Infinity && media.duration > 0) {
                 media.currentTime = \(progress) * media.duration;
-            } else {
-                var bar = document.querySelector('[class*="progress" i], [class*="timeline" i]');
-                if (bar) {
+                success = true;
+            }
+            if (!success) {
+                var bars = document.querySelectorAll('[role="slider"], [class*="progress" i], [class*="timeline" i]');
+                if (bars.length > 0) {
+                    var bar = bars[bars.length - 1];
                     var rect = bar.getBoundingClientRect();
                     var x = rect.left + rect.width * \(progress);
                     var y = rect.top + rect.height / 2;
-                    var clickEvent = new MouseEvent('click', {
-                        view: window, bubbles: true, cancelable: true, clientX: x, clientY: y
-                    });
-                    bar.dispatchEvent(clickEvent);
+                    var opts = { bubbles: true, clientX: x, clientY: y };
+                    bar.dispatchEvent(new PointerEvent('pointerdown', opts));
+                    bar.dispatchEvent(new MouseEvent('mousedown', opts));
+                    bar.dispatchEvent(new MouseEvent('mouseup', opts));
+                    bar.dispatchEvent(new PointerEvent('pointerup', opts));
+                    bar.dispatchEvent(new MouseEvent('click', opts));
                 }
             }
         }
@@ -120,9 +170,10 @@ class WebViewModel: ObservableObject {
                 // 2. Универсальный Media Session API
                 if (navigator.mediaSession) {
                     if (navigator.mediaSession.metadata) {
-                        title = navigator.mediaSession.metadata.title || title;
-                        artist = navigator.mediaSession.metadata.artist || artist;
-                        var artwork = navigator.mediaSession.metadata.artwork;
+                        var md = navigator.mediaSession.metadata;
+                        title = md.title || title;
+                        artist = md.artist || artist;
+                        var artwork = md.artwork;
                         if (artwork && artwork.length > 0) {
                             var src = artwork[artwork.length - 1].src;
                             if (src.includes('avatars.yandex.net')) {
@@ -137,6 +188,15 @@ class WebViewModel: ObservableObject {
                         position = navigator.mediaSession.positionState.position;
                         duration = navigator.mediaSession.positionState.duration;
                     }
+                }
+                
+                // 2.5 Расширенный поиск по DOM (на случай отключения Media Session)
+                if (title === 'Не играет' || title === '') {
+                    var titleEl = document.querySelector('[class*="TrackTitle_title" i], [class*="track-title" i], [class*="Player_title" i], [data-test-id="track-title" i]');
+                    if (titleEl) title = titleEl.innerText || titleEl.textContent;
+                    
+                    var artistEl = document.querySelector('[class*="TrackTitle_artists" i], [class*="track-artist" i], [class*="Player_artist" i], [data-test-id="track-artist" i]');
+                    if (artistEl) artist = artistEl.innerText || artistEl.textContent;
                 }
                 
                 // 3. Прямой опрос DOM-тегов audio/video
@@ -169,7 +229,7 @@ class WebViewModel: ObservableObject {
                 
                 // 5. Проверка кнопок Play/Pause в интерфейсе
                 if (!isPlaying) {
-                    var pauseBtn = document.querySelector('[aria-label*="Пауза"], [title*="Пауза"]');
+                    var pauseBtn = document.querySelector('[aria-label*="Пауза" i], [title*="Пауза" i], [aria-label*="Pause" i], [title*="Pause" i], [class*="pause" i]');
                     if (pauseBtn) isPlaying = true;
                 }
                 

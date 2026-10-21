@@ -34,6 +34,8 @@ struct ContentView: View {
         .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous)) // Скругляем углы как у системного Dock
         .ignoresSafeArea() // Игнорируем safe area, чтобы системный заголовок не смещал контент вниз
         .frame(maxWidth: .infinity, maxHeight: .infinity) // Динамическое заполнение всего окна Mac
+        // Минимум задаём на самом содержимом: window.minSize SwiftUI перезаписывает, и окно сжималось в линию
+        .frame(minWidth: minContentSize.width, minHeight: minContentSize.height)
         .gesture(
             DragGesture()
                 .onChanged { _ in
@@ -64,13 +66,21 @@ struct ContentView: View {
         }
     }
     
+    private var minContentSize: CGSize {
+        switch viewMode {
+        case 0: return CGSize(width: 200, height: 440)
+        case 1: return CGSize(width: 300, height: 200)
+        default: return CGSize(width: 150, height: 24)
+        }
+    }
+    
     private func updateWindowSize(animated: Bool) {
         DispatchQueue.main.async {
             if let window = NSApplication.shared.widgetWindow {
                 // Используем сохраненные пользователем размеры (с минимальными ограничениями)
                 let vSize = NSSize(width: max(200, verticalWidth), height: max(440, verticalHeight))
                 let hSize = NSSize(width: max(300, horizontalWidth), height: max(200, horizontalHeight))
-                let dSize = NSSize(width: max(180, dockWidth), height: max(30, dockHeight))
+                let dSize = NSSize(width: max(180, dockWidth), height: max(24, dockHeight))
                 
                 let newSize: NSSize
                 let minSize: NSSize
@@ -83,7 +93,7 @@ struct ContentView: View {
                     minSize = NSSize(width: 300, height: 200)
                 } else {
                     newSize = dSize
-                    minSize = NSSize(width: 150, height: 15) // Позволяет делать dock супер узким
+                    minSize = NSSize(width: 150, height: 24) // Узкая полоса, но кнопки ещё видны и нажимаются
                 }
                 
                 var frame = window.frame

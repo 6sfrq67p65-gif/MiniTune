@@ -12,6 +12,7 @@ struct YandexMusicWidgetApp: App {
                 .edgesIgnoringSafeArea(.all) // Заполняем фон целиком, чтобы не было прозрачной полосы
         }
         .windowStyle(HiddenTitleBarWindowStyle())
+        .windowResizability(.contentMinSize) // окно не меньше минимума содержимого
 
         // Значка в Dock нет (LSUIElement), управление приложением — из строки меню
         MenuBarExtra("MiniTune", systemImage: "music.note") {

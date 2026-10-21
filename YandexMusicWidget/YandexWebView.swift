@@ -107,8 +107,37 @@ class WebViewModel: ObservableObject {
     }
     
     func seek(to progress: Double) {
+        // Сразу двигаем полосу, чтобы до следующего опроса она не прыгала назад
+        self.progress = progress
+        seekHoldUntil = Date().addingTimeInterval(1.5)
         let js = """
-        if (typeof externalAPI !== 'undefined') {
+        var mt = window.__mtMedia;
+        // Сначала через ползунок самого сайта: так плеер сайта знает о перемотке и не сбивает звук
+        var bar = document.querySelector('section[aria-label="Плеер" i], [class*="PlayerBar" i]');
+        // В плеере два ползунка: трек и громкость. Громкость пропускаем по подписи,
+        // из остальных берём тот, чей максимум ближе к длине трека (или самый длинный)
+        var range = null;
+        var ranges = bar ? bar.querySelectorAll('input[type="range"]') : [];
+        var trackLen = (mt && mt.duration > 0 && mt.duration !== Infinity) ? mt.duration : 0;
+        var best = Infinity;
+        for (var i = 0; i < ranges.length; i++) {
+            var r = ranges[i];
+            var holder = r.closest('[class*="olume" i], [aria-label*="ромкост" i]');
+            var lbl = (r.getAttribute('aria-label') || '') + ' ' + (r.className || '');
+            if (holder || /громк|volume/i.test(lbl)) continue;
+            var m = parseFloat(r.max);
+            if (!(m > 1)) continue;
+            var score = trackLen > 0 ? Math.abs(m - trackLen) : -m;
+            if (score < best) { best = score; range = r; }
+        }
+        if (range && parseFloat(range.max) > 0) {
+            var setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+            setter.call(range, \(progress) * parseFloat(range.max));
+            range.dispatchEvent(new Event('input', { bubbles: true }));
+            range.dispatchEvent(new Event('change', { bubbles: true }));
+        } else if (mt && mt.duration > 0 && mt.duration !== Infinity) {
+            mt.currentTime = \(progress) * mt.duration;
+        } else if (typeof externalAPI !== 'undefined') {
             var track = externalAPI.getCurrentTrack();
             var dur = track ? track.duration : 0;
             if (dur > 0) externalAPI.setPosition(\(progress) * dur);
@@ -200,6 +229,20 @@ class WebViewModel: ObservableObject {
                     if (artistEl) artist = artistEl.innerText || artistEl.textContent;
                 }
                 
+                // 2.7 Пойманный при загрузке плеер и положение из Media Session
+                var mt = window.__mtMedia;
+                if (mt && mt.duration > 0 && mt.duration !== Infinity) {
+                    position = mt.currentTime;
+                    duration = mt.duration;
+                    if (!mt.paused) isPlaying = true;
+                } else if (window.__mtPos && window.__mtPos.state.duration > 0) {
+                    var st = window.__mtPos.state;
+                    position = st.position || 0;
+                    if (isPlaying) position += (Date.now() - window.__mtPos.at) / 1000 * (st.playbackRate || 1);
+                    duration = st.duration;
+                    position = Math.min(position, duration);
+                }
+
                 // 3. Прямой опрос DOM-тегов audio/video
                 var mediaList = document.querySelectorAll('audio, video');
                 var isDOMPlaying = false;
@@ -217,7 +260,14 @@ class WebViewModel: ObservableObject {
                 
                 // 4. Поиск ползунка прогресса в React UI (как запасной вариант для времени)
                 if (duration === 0 || isNaN(duration)) {
-                    var slider = document.querySelector('[role="slider"][aria-valuemax]');
+                    // Только в плеере и не ползунок громкости: иначе громкость показывалась как полный трек
+                    var bar4 = document.querySelector('section[aria-label="Плеер" i], [class*="PlayerBar" i]');
+                    var sliders = bar4 ? bar4.querySelectorAll('[role="slider"][aria-valuemax]') : [];
+                    var slider = null;
+                    for (var k = 0; k < sliders.length; k++) {
+                        var lbl = (sliders[k].getAttribute('aria-label') || '') + ' ' + (sliders[k].className || '');
+                        if (!/громк|volume/i.test(lbl)) { slider = sliders[k]; break; }
+                    }
                     if (slider) {
                         var val = parseFloat(slider.getAttribute('aria-valuenow'));
                         var max = parseFloat(slider.getAttribute('aria-valuemax'));
@@ -237,8 +287,10 @@ class WebViewModel: ObservableObject {
                 }
                 
                 // Резервный поиск обложки
-                if (cover === '' || cover === 'Не играет') {
-                    var images = document.querySelectorAll('img');
+                // Только для известного трека и только в плеере: иначе бралась любая картинка со страницы
+                var bar5 = document.querySelector('section[aria-label="Плеер" i], [class*="PlayerBar" i]');
+                if (cover === '' && title !== 'Не играет' && title !== '' && bar5) {
+                    var images = bar5.querySelectorAll('img');
                     for (var i = 0; i < images.length; i++) {
                         var imgsrc = images[i].src;
                         if (imgsrc && imgsrc.includes('avatars.yandex.net/get-music-content')) {
@@ -248,6 +300,9 @@ class WebViewModel: ObservableObject {
                 }
                 
                 // Итоги
+                if (title === 'Не играет' || title === '') {
+                    cover = ''; position = 0; duration = 0; isPlaying = false;
+                }
                 var progress = 0.0;
                 if (duration > 0) progress = position / duration;
                 progress = Math.max(0.0, Math.min(1.0, progress));
@@ -300,11 +355,16 @@ class WebViewModel: ObservableObject {
                     self.trackTitle = newTitle
                     self.artist = newArtist
                     self.isPlaying = newIsPlaying
-                    self.progress = newProgress.isNaN ? 0.0 : newProgress
+                    // Сразу после перемотки страница ещё отдаёт старое время — не откатываем полосу
+                    if Date() >= self.seekHoldUntil {
+                        self.progress = newProgress.isNaN ? 0.0 : newProgress
+                    }
                     self.positionText = newPosText
                     self.remainingText = newRemText
                     
-                    if newCover != "" && newCover != self.coverURL {
+                    if newCover == "" && newTitle == "Не играет" {
+                        self.coverURL = ""
+                    } else if newCover != "" && newCover != self.coverURL {
                         // Яндекс музыка часто дает обложки 50x50, меняем на 400x400 для виджета
                         self.coverURL = newCover.replacingOccurrences(of: "50x50", with: "400x400")
                     }
@@ -318,6 +378,7 @@ class WebViewModel: ObservableObject {
     // MARK: - Медиаклавиши и «Сейчас играет» в Пункте управления
 
     var duration: Double = 0
+    private var seekHoldUntil = Date.distantPast
     private var artworkURL = ""
     private var artwork: MPMediaItemArtwork?
 
@@ -390,12 +451,32 @@ class BrowserWindowManager: NSObject, NSWindowDelegate {
             // Без этого WebKit блокирует вызов media.play() из JavaScript.
             config.mediaTypesRequiringUserActionForPlayback = []
             
+            // Окно плеера почти всегда скрыто. По умолчанию WebKit тормозит скрытые страницы,
+            // и звук запинается при перемотке и смене трека — отключаем это
+            config.preferences.inactiveSchedulingPolicy = .none
+            
             let userScriptCode = """
             Object.defineProperty(window, 'innerWidth', { get: function() { return 1024; }, configurable: true });
             Object.defineProperty(window, 'innerHeight', { get: function() { return 768; }, configurable: true });
             Object.defineProperty(document.documentElement, 'clientWidth', { get: function() { return 1024; }, configurable: true });
             Object.defineProperty(document.documentElement, 'clientHeight', { get: function() { return 768; }, configurable: true });
             window.matchMedia = window.matchMedia || function() { return { matches: false, addListener: function() {}, removeListener: function() {} }; };
+            // Новый сайт играет через Audio, которого нет в DOM, и нет externalAPI.
+            // Запоминаем элемент, который начал играть, и последнее положение из Media Session.
+            (function() {
+                var origPlay = HTMLMediaElement.prototype.play;
+                HTMLMediaElement.prototype.play = function() {
+                    window.__mtMedia = this;
+                    return origPlay.apply(this, arguments);
+                };
+                if (navigator.mediaSession && navigator.mediaSession.setPositionState) {
+                    var origSet = navigator.mediaSession.setPositionState.bind(navigator.mediaSession);
+                    navigator.mediaSession.setPositionState = function(state) {
+                        window.__mtPos = { state: state || {}, at: Date.now() };
+                        return origSet(state);
+                    };
+                }
+            })();
             """
             let userScript = WKUserScript(source: userScriptCode, injectionTime: .atDocumentStart, forMainFrameOnly: false)
             config.userContentController.addUserScript(userScript)
@@ -403,6 +484,9 @@ class BrowserWindowManager: NSObject, NSWindowDelegate {
             webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 800, height: 600), configuration: config)
             webView?.customUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15"
             
+            // Страницу плеера можно отлаживать в Safari: Разработка → MiniTune
+            webView?.isInspectable = true
+
             WebViewModel.shared.webView = webView
             
             let request = URLRequest(url: URL(string: "https://music.yandex.ru")!)

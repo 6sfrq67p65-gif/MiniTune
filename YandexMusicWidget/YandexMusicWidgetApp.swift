@@ -35,7 +35,11 @@ struct YandexMusicWidgetApp: App {
 }
 
 class AppDelegate: NSObject, NSApplicationDelegate {
+    private var playbackActivity: NSObjectProtocol?
+    
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Без значка в Dock macOS может усыпить приложение (App Nap) вместе с плеером
+        playbackActivity = ProcessInfo.processInfo.beginActivity(options: .userInitiatedAllowingIdleSystemSleep, reason: "Воспроизведение музыки")
         // Настраиваем основное окно, чтобы оно было похоже на виджет
         if let window = NSApplication.shared.widgetWindow {
             window.identifier = NSUserInterfaceItemIdentifier("widget")

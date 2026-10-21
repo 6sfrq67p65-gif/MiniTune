@@ -1,6 +1,7 @@
 import SwiftUI
 import WebKit
 import Combine
+import MediaPlayer
 
 class WebViewModel: ObservableObject {
     static let shared = WebViewModel()
@@ -267,6 +268,7 @@ class WebViewModel: ObservableObject {
                     cover: cover,
                     isPlaying: isPlaying,
                     progress: progress,
+                    duration: duration || 0,
                     positionText: posText || "0:00",
                     remainingText: remText || "0:00"
                 };
@@ -306,9 +308,72 @@ class WebViewModel: ObservableObject {
                         // Яндекс музыка часто дает обложки 50x50, меняем на 400x400 для виджета
                         self.coverURL = newCover.replacingOccurrences(of: "50x50", with: "400x400")
                     }
+                    self.duration = dict["duration"] as? Double ?? 0
+                    self.updateNowPlaying()
                 }
             }
         }
+    }
+
+    // MARK: - Медиаклавиши и «Сейчас играет» в Пункте управления
+
+    var duration: Double = 0
+    private var artworkURL = ""
+    private var artwork: MPMediaItemArtwork?
+
+    func setupRemoteCommands() {
+        let cc = MPRemoteCommandCenter.shared()
+        cc.togglePlayPauseCommand.addTarget { [weak self] _ in self?.playPause(); return .success }
+        cc.playCommand.addTarget { [weak self] _ in
+            if self?.isPlaying == false { self?.playPause() }
+            return .success
+        }
+        cc.pauseCommand.addTarget { [weak self] _ in
+            if self?.isPlaying == true { self?.playPause() }
+            return .success
+        }
+        cc.nextTrackCommand.addTarget { [weak self] _ in self?.nextTrack(); return .success }
+        cc.previousTrackCommand.addTarget { [weak self] _ in self?.prevTrack(); return .success }
+        cc.changePlaybackPositionCommand.addTarget { [weak self] event in
+            guard let self, let e = event as? MPChangePlaybackPositionCommandEvent, self.duration > 0 else { return .commandFailed }
+            self.seek(to: e.positionTime / self.duration)
+            return .success
+        }
+    }
+
+    private func updateNowPlaying() {
+        let center = MPNowPlayingInfoCenter.default()
+        guard trackTitle != "Не играет" else {
+            center.nowPlayingInfo = nil
+            center.playbackState = .stopped
+            return
+        }
+        var info: [String: Any] = [
+            MPMediaItemPropertyTitle: trackTitle,
+            MPMediaItemPropertyArtist: artist,
+            MPNowPlayingInfoPropertyPlaybackRate: isPlaying ? 1.0 : 0.0
+        ]
+        if duration > 0 {
+            info[MPMediaItemPropertyPlaybackDuration] = duration
+            info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = progress * duration
+        }
+        if let artwork, artworkURL == coverURL { info[MPMediaItemPropertyArtwork] = artwork }
+        center.nowPlayingInfo = info
+        center.playbackState = isPlaying ? .playing : .paused
+        loadArtworkIfNeeded()
+    }
+
+    private func loadArtworkIfNeeded() {
+        guard !coverURL.isEmpty, coverURL != artworkURL, let url = URL(string: coverURL) else { return }
+        artworkURL = coverURL
+        URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
+            guard let data, let image = NSImage(data: data) else { return }
+            DispatchQueue.main.async {
+                guard let self, self.artworkURL == url.absoluteString else { return }
+                self.artwork = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
+                self.updateNowPlaying()
+            }
+        }.resume()
     }
 }
 
@@ -357,14 +422,23 @@ class BrowserWindowManager: NSObject, NSWindowDelegate {
             
             self.window = win
             
+            WebViewModel.shared.setupRemoteCommands()
+            
+            // Раз в секунду, пока играет; на паузе раз в 3 секунды
+            var tick = 0
             Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
-                WebViewModel.shared.checkMetadata()
+                tick += 1
+                if WebViewModel.shared.isPlaying || tick % 3 == 0 {
+                    WebViewModel.shared.checkMetadata()
+                }
             }
         }
     }
     
     func show() {
         setup()
+        // Приложение без значка в Dock: окно само на передний план не выйдет
+        NSApp.activate(ignoringOtherApps: true)
         window?.makeKeyAndOrderFront(nil)
     }
 

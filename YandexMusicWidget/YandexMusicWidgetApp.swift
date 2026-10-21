@@ -7,11 +7,30 @@ struct YandexMusicWidgetApp: App {
     
     var body: some Scene {
         // Window, а не WindowGroup: виджет один, ⌘N не открывает второй
-        Window("Яндекс Музыка", id: "widget") {
+        Window("MiniTune", id: "widget") {
             ContentView()
                 .edgesIgnoringSafeArea(.all) // Заполняем фон целиком, чтобы не было прозрачной полосы
         }
         .windowStyle(HiddenTitleBarWindowStyle())
+
+        // Значка в Dock нет (LSUIElement), управление приложением — из строки меню
+        MenuBarExtra("MiniTune", systemImage: "music.note") {
+            Button("Показать виджет") {
+                NSApp.activate(ignoringOtherApps: true)
+                NSApplication.shared.widgetWindow?.orderFront(nil)
+            }
+            Button("Скрыть виджет") {
+                NSApplication.shared.widgetWindow?.orderOut(nil)
+            }
+            Button("Открыть плеер") {
+                BrowserWindowManager.shared.show()
+            }
+            Divider()
+            Button("Выйти") {
+                NSApplication.shared.terminate(nil)
+            }
+            .keyboardShortcut("q")
+        }
     }
 }
 
@@ -44,6 +63,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             // Убираем стандартный серый фон
             window.contentView?.wantsLayer = true
             window.contentView?.layer?.backgroundColor = NSColor.clear.cgColor
+
+            // Возвращаем виджет туда, где он был, если это место есть на одном из экранов
+            let defaults = UserDefaults.standard
+            if defaults.object(forKey: "widgetX") != nil {
+                let origin = CGPoint(x: defaults.double(forKey: "widgetX"), y: defaults.double(forKey: "widgetY"))
+                if NSScreen.screens.contains(where: { $0.visibleFrame.contains(origin) }) {
+                    window.setFrameOrigin(origin)
+                }
+            }
+            NotificationCenter.default.addObserver(forName: NSWindow.didMoveNotification, object: window, queue: .main) { _ in
+                defaults.set(Double(window.frame.origin.x), forKey: "widgetX")
+                defaults.set(Double(window.frame.origin.y), forKey: "widgetY")
+            }
+
             // Отслеживаем изменение размера пользователем и сохраняем
             NotificationCenter.default.addObserver(forName: NSWindow.didResizeNotification, object: window, queue: .main) { _ in
                 let size = window.frame.size

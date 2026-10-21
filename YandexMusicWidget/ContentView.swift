@@ -6,13 +6,14 @@ struct ContentView: View {
     
     // Сохраненные размеры окон пользователем
     @AppStorage("horizontalWidth") private var horizontalWidth: Double = 420
-    @AppStorage("horizontalHeight") private var horizontalHeight: Double = 180
+    @AppStorage("horizontalHeight") private var horizontalHeight: Double = 200
     @AppStorage("verticalWidth") private var verticalWidth: Double = 250
-    @AppStorage("verticalHeight") private var verticalHeight: Double = 420
+    @AppStorage("verticalHeight") private var verticalHeight: Double = 460
     @AppStorage("dockWidth") private var dockWidth: Double = 400
     @AppStorage("dockHeight") private var dockHeight: Double = 60
     
     @State private var dragOffset: CGPoint? = nil
+    @State private var seekPreview: Double? = nil
     
     var body: some View {
         ZStack {
@@ -67,8 +68,8 @@ struct ContentView: View {
         DispatchQueue.main.async {
             if let window = NSApplication.shared.widgetWindow {
                 // Используем сохраненные пользователем размеры (с минимальными ограничениями)
-                let vSize = NSSize(width: max(200, verticalWidth), height: max(300, verticalHeight))
-                let hSize = NSSize(width: max(300, horizontalWidth), height: max(120, horizontalHeight))
+                let vSize = NSSize(width: max(200, verticalWidth), height: max(440, verticalHeight))
+                let hSize = NSSize(width: max(300, horizontalWidth), height: max(200, horizontalHeight))
                 let dSize = NSSize(width: max(180, dockWidth), height: max(30, dockHeight))
                 
                 let newSize: NSSize
@@ -76,10 +77,10 @@ struct ContentView: View {
                 
                 if viewMode == 0 {
                     newSize = vSize
-                    minSize = NSSize(width: 200, height: 300)
+                    minSize = NSSize(width: 200, height: 440)
                 } else if viewMode == 1 {
                     newSize = hSize
-                    minSize = NSSize(width: 300, height: 120)
+                    minSize = NSSize(width: 300, height: 200)
                 } else {
                     newSize = dSize
                     minSize = NSSize(width: 150, height: 15) // Позволяет делать dock супер узким
@@ -128,11 +129,13 @@ struct ContentView: View {
             .frame(maxWidth: .infinity)
             .padding(.horizontal, 10)
             
+            progressBar
+                .padding(.horizontal, 20)
+
             // Кнопки управления
             HStack(spacing: 25) {
                 playbackControls
             }
-            .padding(.top, 5)
             
             Spacer(minLength: 0) // Толкает нижние кнопки вниз, а верхние элементы вверх
             
@@ -165,8 +168,10 @@ struct ContentView: View {
                     .foregroundColor(.white.opacity(0.7))
                     .lineLimit(1)
                     .padding(.top, 2)
-                
+
                 Spacer()
+
+                progressBar
                 
                 // Кнопки управления
                 HStack(spacing: 25) {
@@ -320,6 +325,40 @@ struct ContentView: View {
         )
     }
     
+    // Полоса прогресса: клик или перетаскивание перематывают трек
+    private var progressBar: some View {
+        VStack(spacing: 3) {
+            GeometryReader { geo in
+                let shown = seekPreview ?? viewModel.progress
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Color.white.opacity(0.2))
+                    Capsule().fill(Color.white.opacity(0.85))
+                        .frame(width: max(0, min(1, shown)) * geo.size.width)
+                }
+                .frame(height: 4)
+                .frame(maxHeight: .infinity)
+                .contentShape(Rectangle())
+                .gesture(
+                    DragGesture(minimumDistance: 0)
+                        .onChanged { v in seekPreview = max(0, min(1, v.location.x / geo.size.width)) }
+                        .onEnded { v in
+                            viewModel.seek(to: max(0, min(1, v.location.x / geo.size.width)))
+                            seekPreview = nil
+                        }
+                )
+            }
+            .frame(height: 12)
+
+            HStack {
+                Text(viewModel.positionText)
+                Spacer()
+                Text("-" + viewModel.remainingText)
+            }
+            .font(.system(size: 10, weight: .medium).monospacedDigit())
+            .foregroundColor(.white.opacity(0.6))
+        }
+    }
+
     @ViewBuilder
     private var playbackControls: some View {
         Button(action: { viewModel.prevTrack() }) {

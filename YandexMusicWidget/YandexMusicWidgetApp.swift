@@ -6,7 +6,8 @@ struct YandexMusicWidgetApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     
     var body: some Scene {
-        WindowGroup {
+        // Window, а не WindowGroup: виджет один, ⌘N не открывает второй
+        Window("Яндекс Музыка", id: "widget") {
             ContentView()
                 .edgesIgnoringSafeArea(.all) // Заполняем фон целиком, чтобы не было прозрачной полосы
         }
@@ -17,7 +18,8 @@ struct YandexMusicWidgetApp: App {
 class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Настраиваем основное окно, чтобы оно было похоже на виджет
-        if let window = NSApplication.shared.windows.first {
+        if let window = NSApplication.shared.widgetWindow {
+            window.identifier = NSUserInterfaceItemIdentifier("widget")
             // Полностью убираем системный заголовок (это отключает защиту от перекрытия Dock'а)
             window.styleMask.remove(.titled)
             window.titlebarAppearsTransparent = true

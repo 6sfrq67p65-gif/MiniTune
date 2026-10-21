@@ -36,7 +36,7 @@ struct ContentView: View {
         .gesture(
             DragGesture()
                 .onChanged { _ in
-                    if let window = NSApplication.shared.windows.first {
+                    if let window = NSApplication.shared.widgetWindow {
                         let mouseLoc = NSEvent.mouseLocation
                         if dragOffset == nil {
                             dragOffset = CGPoint(
@@ -58,14 +58,14 @@ struct ContentView: View {
             BrowserWindowManager.shared.setup()
             updateWindowSize(animated: false)
         }
-        .onChange(of: viewMode) { _ in
+        .onChange(of: viewMode) {
             updateWindowSize(animated: true)
         }
     }
     
     private func updateWindowSize(animated: Bool) {
         DispatchQueue.main.async {
-            if let window = NSApplication.shared.windows.first {
+            if let window = NSApplication.shared.widgetWindow {
                 // Используем сохраненные пользователем размеры (с минимальными ограничениями)
                 let vSize = NSSize(width: max(200, verticalWidth), height: max(300, verticalHeight))
                 let hSize = NSSize(width: max(300, horizontalWidth), height: max(120, horizontalHeight))

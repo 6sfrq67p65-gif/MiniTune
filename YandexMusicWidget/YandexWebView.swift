@@ -229,7 +229,9 @@ class WebViewModel: ObservableObject {
                 
                 // 5. Проверка кнопок Play/Pause в интерфейсе
                 if (!isPlaying) {
-                    var pauseBtn = document.querySelector('[aria-label*="Пауза" i], [title*="Пауза" i], [aria-label*="Pause" i], [title*="Pause" i], [class*="pause" i]');
+                    // Только кнопки внутри плеера: классы с "pause" встречаются на странице и без воспроизведения
+                    var playerBar = document.querySelector('section[aria-label="Плеер" i], [class*="PlayerBar" i], [class*="player-controls" i]');
+                    var pauseBtn = playerBar ? playerBar.querySelector('[aria-label*="Пауза" i], [title*="Пауза" i], [aria-label*="Pause" i], [title*="Pause" i]') : null;
                     if (pauseBtn) isPlaying = true;
                 }
                 
@@ -363,18 +365,23 @@ class BrowserWindowManager: NSObject, NSWindowDelegate {
     
     func show() {
         setup()
-        // Восстанавливаем видимость окна
-        window?.alphaValue = 1.0
-        window?.ignoresMouseEvents = false
         window?.makeKeyAndOrderFront(nil)
     }
-    
+
     // Этот метод вызывается, когда пользователь нажимает красный крестик
     func windowShouldClose(_ sender: NSWindow) -> Bool {
-        // Вместо реального закрытия (которое ломает WebKit), мы просто делаем окно невидимым!
-        sender.alphaValue = 0.0
-        sender.ignoresMouseEvents = true
+        // Вместо реального закрытия (которое ломает WebKit) убираем окно с экрана:
+        // WebView продолжает работать и играть, но окна нет в Mission Control и ⌘`
+        sender.orderOut(nil)
         return false // Запрещаем реальное закрытие
+    }
+}
+
+extension NSApplication {
+    // Окно самого виджета (не окно плеера)
+    var widgetWindow: NSWindow? {
+        windows.first { $0.identifier?.rawValue == "widget" }
+            ?? windows.first { $0 !== BrowserWindowManager.shared.window && $0.contentView != nil && !($0 is NSPanel) }
     }
 }
 
